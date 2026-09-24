@@ -25,7 +25,6 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.optim import SGD
 from src.data.loader import create_dataloader
 
 from app.client import create_client_app
@@ -170,15 +169,9 @@ class FedMedOrchestrator:
         )
 
         criterion = nn.CrossEntropyLoss()
-        optimizer = SGD(
-            model.parameters(),
-            lr=self._training_config.learning_rate,
-        )
-
         trainer = Trainer(
             model=model,
             criterion=criterion,
-            optimizer=optimizer,
             config=self._training_config,
         )
 

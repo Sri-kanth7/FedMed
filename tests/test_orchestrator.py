@@ -61,3 +61,24 @@ def test_build_client_uses_eval_split_for_evaluation_loader() -> None:
 
     assert len(client._train_loader.dataset) == 4
     assert len(client._eval_loader.dataset) == 8
+
+
+def test_build_client_uses_configured_optimizer() -> None:
+    from src.common.config import TrainingConfig
+
+    orchestrator = FedMedOrchestrator()
+
+    orchestrator._training_config = TrainingConfig(
+        local_epochs=2,
+        batch_size=4,
+        learning_rate=0.01,
+        optimizer="adam",
+        seed=42,
+    )
+
+    client = orchestrator.build_client(
+        "client_0",
+        partition_index=0,
+    )
+
+    assert isinstance(client._trainer._optimizer, torch.optim.Adam)
