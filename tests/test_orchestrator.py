@@ -82,3 +82,57 @@ def test_build_client_uses_configured_optimizer() -> None:
     )
 
     assert isinstance(client._trainer._optimizer, torch.optim.Adam)
+
+
+def test_build_client_uses_configured_model_settings() -> None:
+    from src.common.config import ModelConfig
+
+    orchestrator = FedMedOrchestrator()
+
+    orchestrator._model_config = ModelConfig(
+        name="configured_model",
+        device="cpu:0",
+    )
+
+    client = orchestrator.build_client(
+        "client_0",
+        partition_index=0,
+    )
+
+    assert client._model.name == "configured_model_client_0"
+    assert client._model.device == torch.device("cpu:0")
+
+
+def test_build_client_uses_configured_seed() -> None:
+    from src.common.config import TrainingConfig
+    from src.fl.orchestrator import FlowerSmokeTestModel
+
+    orchestrator = FedMedOrchestrator()
+
+    orchestrator._training_config = TrainingConfig(
+        local_epochs=2,
+        batch_size=4,
+        learning_rate=0.01,
+        optimizer="sgd",
+        seed=123,
+    )
+
+    client = orchestrator.build_client(
+        "client_0",
+        partition_index=0,
+    )
+
+    torch.manual_seed(123)
+    expected_model = FlowerSmokeTestModel(
+        name="configured_model_client_0",
+        device="cpu",
+    )
+
+    for actual, expected in zip(
+        client.get_parameters(),
+        expected_model.get_parameters(),
+    ):
+        assert torch.equal(
+            torch.from_numpy(actual),
+            torch.from_numpy(expected),
+        )

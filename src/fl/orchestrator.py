@@ -61,6 +61,7 @@ class FedMedOrchestrator:
     def __init__(self) -> None:
         config = load_config()
         self._training_config = config.training
+        self._model_config = config.model
         self._data_config = config.data
 
     # ------------------------------------------------------------------
@@ -161,11 +162,11 @@ class FedMedOrchestrator:
         if not isinstance(client_id, str) or not client_id.strip():
             raise ValueError("client_id must be a non-empty string")
 
-        torch.manual_seed(100)
+        torch.manual_seed(self._training_config.seed)
 
         model = FlowerSmokeTestModel(
-            name=f"flower_smoke_{client_id}",
-            device="cpu",
+            name=f"{self._model_config.name}_{client_id}",
+            device=self._model_config.device,
         )
 
         criterion = nn.CrossEntropyLoss()
