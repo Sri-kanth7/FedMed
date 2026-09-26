@@ -1,1137 +1,1593 @@
-# FedMed Flower Server Runtime
-
-## Module Overview
-
-This module contains the **Flower ServerApp integration layer** for FedMed.
-
-The purpose of this module is to connect the framework-independent FedMed
-federated-learning core with the **Flower 1.34.0 ServerApp runtime**.
-
-The architecture currently follows:
-
-    Flower ServerApp
-            |
-            v
-    FedMedFlowerStrategy
-            |
-            v
-    FedMed FederatedStrategy
-            |
-            v
-    Aggregator
-            |
-            v
-    FedAvgAggregator
-
-The Flower-specific code is kept in:
-
-    app/server.py
-
-The framework-independent federated-learning logic remains under:
-
-    src/
-
-The application entry point is:
-
-    app/main.py
 
 
-## What `app/server.py` Contains
+# FedMed
 
-`app/server.py` implements the Flower-side server adapter.
+## Privacy-Preserving Cross-Silo Federated Learning Engine for Medical AI
 
-### 1. `FedMedFlowerStrategy`
+FedMed is a modular federated learning engine designed for privacy-preserving collaborative machine learning across distributed medical institutions.
 
-`FedMedFlowerStrategy` extends Flower's:
+The system separates the framework-independent federated learning core from the Flower runtime layer, allowing the core training, strategy, aggregation, data, and model components to remain independent of the federated-learning framework.
 
-    flwr.serverapp.strategy.FedAvg
+---
 
-It adapts Flower's ServerApp strategy lifecycle to the FedMed
-strategy/aggregation architecture.
+# 1. Project Overview
 
-The class currently handles:
+FedMed is designed around a cross-silo federated learning architecture where multiple medical organizations can collaboratively train a machine learning model without directly sharing their local training data.
 
-- Flower node selection
-- training message construction
-- evaluation message construction
-- Flower `Message` handling
-- conversion of Flower training replies into FedMed results
-- conversion of Flower evaluation replies into FedMed results
-- delegation of training aggregation to the FedMed strategy
-- delegation of evaluation aggregation to the FedMed strategy
+The current implementation focuses on:
+
+- Federated client-server training
+- Federated rounds
+- Model parameter exchange
+- FedAvg aggregation
+- Client selection
+- Client failure handling
+- IID and label-skew data partitioning
+- Local training configuration
+- Data quantity imbalance
+- Centralized vs federated experimentation
+- Flower 1.34.0 runtime integration
+- Deterministic and reproducible experiments
+- Automated testing
+
+The project is currently being developed as a modular research and experimentation platform.
+
+---
+
+# 2. Architecture
+
+FedMed follows a framework-independent core architecture with Flower isolated at the application boundary.
+
+```text
+                         FedMed
+                           |
+              +------------+------------+
+              |                         |
+       Framework-Independent       Flower Runtime
+             Core                    Boundary
+              |                         |
+              v                         v
+        Federated Client          app/client.py
+        Federated Strategy        app/server.py
+        Aggregator                app/main.py
+        Round Coordinator
+        Parameters
+        Training
+        Evaluation
+        Data
+        Models
+              |
+              v
+        FedAvg Aggregation
+
+The high-level structure is:
+
+FedMed
+├── src/
+│   ├── common/
+│   ├── data/
+│   ├── models/
+│   ├── training/
+│   ├── aggregation/
+│   ├── fl/
+│   └── monitoring/
+│
+├── app/
+│   ├── client.py
+│   ├── server.py
+│   ├── failure_mod.py
+│   └── main.py
+│
+├── configs/
+├── tests/
+├── pyproject.toml
+├── requirements.txt
+├── Dockerfile
+└── docker-compose.yml
 
 
-## Flower 1.34.0 Compatibility
+---
 
-The implementation was verified against:
+3. Core Design Principles
 
-    Flower 1.34.0
+3.1 Framework Independence
 
-Flower 1.34.0 uses the following default ServerApp strategy record keys:
+The main federated learning logic remains under:
 
-    arrayrecord_key  = "arrays"
-    configrecord_key = "config"
+src/
 
-Therefore training and evaluation input messages use:
+The core does not depend on Flower transport or Flower message structures.
 
-    "arrays"
-    "config"
+Flower-specific behavior remains under:
 
-rather than custom record names.
+app/
 
-Flower internally constructs training messages using:
-
-    RecordDict({
-        self.arrayrecord_key: arrays,
-        self.configrecord_key: config,
-    })
-
-and sends them with:
-
-    MessageType.TRAIN
-
-Evaluation messages use the same `arrays` and `config` record keys
-with:
-
-    MessageType.EVALUATE
+This keeps the federated learning engine separated from the runtime framework.
 
 
-## Training Flow
+---
 
-The current training flow is:
+3.2 Strategy and Aggregator Separation
 
-    ServerApp
+FedMed intentionally separates federation policy from mathematical aggregation.
+
+FedMed Strategy
+       |
+       | federation policy
+       | client selection
+       | round decisions
+       v
+Aggregator
+       |
+       | mathematical aggregation
+       v
+Aggregated Parameters
+
+The responsibility split is:
+
+Strategy
+    ├── client selection
+    ├── federation policy
+    ├── round-level decisions
+    └── delegates aggregation
+
+Aggregator
+    └── mathematical parameter aggregation
+
+The current implementation uses:
+
+FedAvgStrategy
+        |
+        v
+FedAvgAggregator
+
+The Flower adapter does not duplicate FedAvg mathematics.
+
+
+---
+
+4. Flower Runtime Architecture
+
+FedMed currently integrates with:
+
+Flower 1.34.0
+
+The Flower runtime boundary is:
+
+Flower ServerApp
        |
        v
-    configure_train()
-       |
-       +--> select available Flower nodes
-       |
-       +--> create ConfigRecord
-       |
-       +--> add server round
-       |
-       +--> create RecordDict
-       |
-       +--> construct TRAIN Messages
+FedMedFlowerStrategy
        |
        v
-    Flower SuperNode / ClientApp
+FedMed FedAvgStrategy
        |
        v
-    Client training
+FedAvgAggregator
+
+The Flower adapter is implemented in:
+
+app/server.py
+
+The client adapter is implemented in:
+
+app/client.py
+
+The application composition root is:
+
+app/main.py
+
+The framework-independent composition root is:
+
+src/fl/orchestrator.py
+
+
+---
+
+5. Flower Server Adapter
+
+app/server.py contains the Flower-side server adapter.
+
+The main class is:
+
+FedMedFlowerStrategy
+
+Its responsibilities include:
+
+Flower node selection
+
+Training message construction
+
+Evaluation message construction
+
+Flower Message handling
+
+Training-result conversion
+
+Evaluation-result conversion
+
+Delegation to the FedMed strategy
+
+Handling failed client replies
+
+Aggregating successful client results
+
+Returning Flower-compatible responses
+
+
+The Flower adapter does not implement FedAvg mathematics directly.
+
+
+---
+
+6. Training Flow
+
+The federated training flow is:
+
+Flower ServerApp
        |
        v
-    FitRes
+configure_train()
+       |
+       +--> Select Flower nodes
+       |
+       +--> Read global parameters
+       |
+       +--> Create training configuration
+       |
+       +--> Add server round
+       |
+       +--> Construct Flower Messages
        |
        v
-    Flower RecordDict
+Flower SuperNode
        |
        v
-    aggregate_train()
+Flower ClientApp
        |
        v
-    FedMed FederatedStrategy
+FedMed FederatedClient
        |
        v
-    FedMed Aggregator
+Local Training
+       |
+       v
+Training Result
+       |
+       v
+Flower Server
+       |
+       v
+aggregate_train()
+       |
+       v
+FedMed Strategy
+       |
+       v
+FedAvgAggregator
+       |
+       v
+New Global Parameters
 
 
-### Training Message
+---
 
-The training message contains:
-
-    fitins.parameters
-    fitins.config
-
-The current implementation constructs the corresponding
-Flower-compatible RecordDict using the strategy's configured
-Flower record keys.
-
-
-### Training Aggregation
-
-Training aggregation is intentionally delegated to the FedMed
-strategy.
-
-The Flower adapter does not implement FedAvg mathematics itself.
-
-The current responsibility split is:
-
-    FedMedFlowerStrategy
-        = Flower/runtime policy and adaptation
-
-    FedAvgStrategy
-        = FedMed federation strategy
-
-    FedAvgAggregator
-        = mathematical parameter aggregation
-
-
-This preserves the previously established FedMed architecture.
-
-
-## Evaluation Flow
+7. Evaluation Flow
 
 The evaluation flow is:
 
-    ServerApp
+Flower ServerApp
        |
        v
-    configure_evaluate()
+configure_evaluate()
        |
-       +--> select available Flower nodes
+       +--> Select evaluation nodes
        |
-       +--> create evaluation ConfigRecord
+       +--> Create evaluation configuration
        |
-       +--> add server round
-       |
-       +--> construct EVALUATE Messages
+       +--> Construct EVALUATE messages
        |
        v
-    Flower SuperNode / ClientApp
+Flower ClientApp
        |
        v
-    Client evaluation
+Local Evaluation
        |
        v
-    EvaluateRes
+Evaluation Result
        |
        v
-    Flower RecordDict
+Flower Server
        |
        v
-    aggregate_evaluate()
+aggregate_evaluate()
        |
        v
-    FedMed FederatedStrategy
+FedMed Strategy
        |
        v
-    aggregated evaluation metrics
+Aggregated Evaluation Metrics
 
-
-## Flower Compatibility Conversion
-
-Flower's compatibility layer represents a training result using:
-
-    fitres.parameters
-    fitres.num_examples
-    fitres.metrics
-    fitres.status
-
-The FedMed Flower adapter converts these records into:
-
-    FederatedFitResult
-
-The conversion validates:
-
-- parameter payload type
-- number-of-examples payload
-- metric payload type
-- numeric metric values
-
-Parameter arrays are copied at the Flower/FedMed boundary to avoid
-accidental mutation between the two layers.
-
-
-Evaluation results are similarly converted into:
-
-    FederatedEvaluateResult
-
-
-## `app/main.py`
-
-The application entry point is intentionally small.
-
-It constructs the FedMed orchestrator and obtains the Flower
-applications from it:
-
-    from src.fl.orchestrator import FedMedOrchestrator
-
-    orchestrator = FedMedOrchestrator()
-    client_app, server_app = orchestrator.build_apps()
-
-The module exports:
-
-    client_app
-    server_app
-
-Flower therefore loads the ClientApp and ServerApp through the
-application configuration in `pyproject.toml`.
-
-
-## How to Run
-
-### 1. Activate the virtual environment
-
-    cd ~/fedmed
-    source .venv/bin/activate
-
-
-### 2. Start the Flower SuperLink
-
-In Terminal 1:
-
-    cd ~/fedmed
-    source .venv/bin/activate
-    flower-superlink --insecure
-
-The current local SuperLink starts the following APIs:
-
-    Control API : 9093
-    Runtime API : 9091
-    Fleet API   : 9092
-
-
-### 3. Start SuperNode 1
-
-In Terminal 2:
-
-    cd ~/fedmed
-    source .venv/bin/activate
-    flower-supernode --insecure --superlink 127.0.0.1:9092 --clientappio-api-address 0.0.0.0:9094
-
-
-### 4. Start SuperNode 2
-
-In Terminal 3:
-
-    cd ~/fedmed
-    source .venv/bin/activate
-    flower-supernode --insecure --superlink 127.0.0.1:9092 --clientappio-api-address 0.0.0.0:9095
-
-
-### 5. Run the Flower application
-
-In Terminal 4:
-
-    cd ~/fedmed
-    source .venv/bin/activate
-
-    FLWR_LOG_LEVEL=DEBUG flwr run . local-deployment --stream
-
-
-## Expected Runtime
-
-A successful run currently shows:
-
-    [FedMed] assembling Flower application
-    [FedMed] Flower ClientApp assembled
-    [FedMed] Flower ServerApp assembled
-
-followed by:
-
-    [FedMed] initial global parameters created
-    [FedMed] strategy assembled: FedAvgStrategy -> FedAvgAggregator
-    [FedMed] Flower strategy adapter created: FedMedFlowerStrategy
-
-The server then starts the configured number of federated rounds.
-
-
-For a one-round local deployment, the current successful execution
-shows:
-
-    [ROUND 1/1]
-
-followed by:
-
-    configure_train
-    training on two selected nodes
-    training aggregation
-    configure_evaluate
-    evaluation on two selected nodes
-    evaluation aggregation
-
-
-## Current Successful Run
-
-The current four-terminal local deployment has been successfully
-executed with two SuperNodes.
-
-The latest successful run completed:
-
-    Round: 1/1
-
-Training:
-
-    nodes selected: 2
-    batches_processed: 2
-    epochs_completed: 1
-    num_examples: 16
-    train_loss: approximately 0.7721
-
-Evaluation:
-
-    nodes selected: 2
-    num_examples: 16
-    loss: approximately 0.7087
-    accuracy: 0.625
-
-The Flower strategy completed successfully and returned final results.
-
-
-## Validation
-
-The current implementation has been validated with:
-
-    python -m py_compile app/server.py
-
-    python -c "from app.server import FedMedFlowerStrategy; print('server import OK')"
-
-The server-specific test suite passes:
-
-    31 passed
-
-The complete project test suite currently passes:
-
-    577 passed, 2 warnings
-
-The warnings are existing third-party deprecation warnings from
-the installed Typer/Click environment.
-
-
-## Important Implementation Decision
-
-The Flower adapter does NOT replace the FedMed strategy architecture.
-
-The responsibility boundary is:
-
-    Flower
-      |
-      | runtime / transport
-      v
-    FedMedFlowerStrategy
-      |
-      | federation policy / delegation
-      v
-    FedMed FederatedStrategy
-      |
-      | mathematical aggregation
-      v
-    Aggregator
-
-
-The `Aggregator` remains responsible for mathematical parameter
-aggregation.
-
-The `FederatedStrategy` remains responsible for federated strategy
-behavior and delegates mathematical aggregation to the Aggregator.
-
-`FedMedFlowerStrategy` exists to adapt this architecture to Flower's
-ServerApp runtime.
-
-
-## Current Status
-
-### Completed
-
-- Flower 1.34.0 ServerApp integration
-- `FedMedFlowerStrategy`
-- Flower-compatible `arrays` / `config` record handling
-- Flower-compatible training message construction
-- Flower-compatible evaluation message construction
-- Flower training-result conversion
-- Flower evaluation-result conversion
-- Strategy-to-Aggregator delegation
-- Two-SuperNode local deployment
-- Four-terminal Flower dry run
-- One-round training execution
-- One-round evaluation execution
-- Server-side strategy completion
-- Server-specific tests
-- Full project test suite
-
-### Current Verification
-
-    Flower version: 1.34.0
-
-    Server tests:   31 passed
-    Full tests:     577 passed
-
-    Local deployment:
-        SuperLink : running
-        SuperNode : 2 nodes
-        ServerApp : successful
-        ClientApp : successful
-        Round 1   : successful
-
-
-## Known Non-Blocking Warning
-
-The Flower application currently reports:
-
-    Recommended property "license" missing in [project]
-
-This is a `pyproject.toml` metadata warning and does not prevent the
-application from running.
-
-It is separate from the ServerApp runtime implementation.
-
-
-## Files Relevant to This Module
-
-    app/
-    ├── main.py
-    ├── server.py
-    └── client.py
-
-    src/
-    ├── fl/
-    │   └── orchestrator.py
-    └── ...
-
-    tests/
-    └── test_app_server.py
-
-    pyproject.toml
-
-
-## Daily Development Check
-
-Before committing changes to this module:
-
-    python -m py_compile app/server.py
-
-    python -c "from app.server import FedMedFlowerStrategy; print('server import OK')"
-
-    pytest -q tests/test_app_server.py
-
-    pytest -q
-
-A successful state is:
-
-    31 passed
-
-and:
-
-    577 passed, 2 warnings
-
-## Federated Learning Experiments
-
-The following experiments have been completed using the Flower 1.34.0
-multi-node runtime. The experiments are intended to validate FedMed's
-federated-learning behavior under different runtime conditions.
-
-### Experiment Discipline
-
-Each experiment follows a controlled approach:
-
-1. Define the hypothesis or experimental objective.
-2. Keep unrelated configuration variables fixed.
-3. Change only the variable under investigation.
-4. Run the federated training workload.
-5. Record training/evaluation metrics and runtime evidence.
-6. Compare the results and document the observations.
 
 ---
 
-### E1 — Baseline Reproducibility
+8. Flower Compatibility
 
-**Objective:** Verify that the same FedMed federated-learning configuration
-produces reproducible results across repeated runs.
+FedMed was verified against:
+
+Flower 1.34.0
+
+The Flower runtime uses:
+
+arrays
+config
+
+as the standard record keys.
+
+Training messages therefore contain:
+
+arrays
+config
+
+Evaluation messages use the same record structure.
+
+The Flower adapter converts Flower results into FedMed result objects.
+
+For training:
+
+Flower FitRes
+      |
+      v
+FederatedFitResult
+
+For evaluation:
+
+Flower EvaluateRes
+      |
+      v
+FederatedEvaluateResult
+
+The conversion layer validates:
+
+parameter payloads
+
+number of examples
+
+metric types
+
+numeric metric values
+
+result status
+
+
+Parameter arrays are copied at the Flower/FedMed boundary to avoid accidental mutation between the two layers.
+
+
+---
+
+9. FedMed Orchestrator
+
+The composition root is:
+
+src/fl/orchestrator.py
+
+FedMedOrchestrator assembles:
+
+models
+
+training configuration
+
+evaluation
+
+data partitions
+
+federated clients
+
+strategies
+
+aggregators
+
+Flower ClientApp
+
+Flower ServerApp
+
+
+The orchestrator provides:
+
+build_client()
+build_strategy()
+build_client_app()
+build_server_app()
+build_apps()
+
+The orchestrator now uses the FedMed data-loader abstraction:
+
+src.data.loader.create_dataloader
+
+instead of constructing a raw PyTorch DataLoader directly.
+
+
+---
+
+10. Data Partitioning
+
+FedMed supports:
+
+IID
+Label Skew
+
+The partitioning logic is implemented in:
+
+src/data/partitioner.py
+
+The partitioner provides deterministic client partitions using configured seeds.
+
+Example:
+
+Global Dataset
+      |
+      v
+Partitioner
+      |
+      +---- Client 0
+      |
+      +---- Client 1
+      |
+      +---- Client 2
+      |
+      +---- Client 3
+
+The project includes tests covering the partitioning behavior.
+
+
+---
+
+11. Client Training
+
+Each federated client contains:
+
+Model
+Trainer
+Evaluator
+Training Data
+Evaluation Data
+Client ID
+
+The client performs:
+
+Receive Global Parameters
+          |
+          v
+Load Parameters
+          |
+          v
+Local Training
+          |
+          v
+Return Updated Parameters
+          |
+          v
+Local Evaluation
+
+The current training implementation uses PyTorch.
+
+The smoke-test model is:
+
+FlowerSmokeTestModel
+
+
+---
+
+12. Client Failure Handling
+
+FedMed includes controlled client-failure experimentation.
+
+The Flower client runtime supports an E6 controlled dropout mechanism through:
+
+app/failure_mod.py
+
+The purpose is to test whether a failed training client prevents the remaining clients from completing a federated round.
+
+The server handles failed training replies by ignoring the failed client and continuing aggregation using successful clients.
+
+
+---
+
+13. Experimental Methodology
+
+Each experiment follows a controlled workflow:
+
+1. Define objective
+       |
+2. Fix unrelated configuration
+       |
+3. Change one experimental variable
+       |
+4. Run federated workload
+       |
+5. Record metrics
+       |
+6. Record parameter fingerprints
+       |
+7. Record runtime evidence
+       |
+8. Document observations
+
+Experiments are treated as observations of the current configuration rather than universal conclusions.
+
+
+---
+
+14. Federated Learning Experiments
+
+The current completed experiments are:
+
+E1 — Baseline Reproducibility
+E2 — Client Count
+E3 — Training Client Participation Fraction
+E4 — Number of Federated Rounds
+E5 — IID vs Non-IID Data
+E6 — Client Failure / Dropout
+E7 — Local Epochs
+E8 — Data Quantity Imbalance
+E9 — Centralized vs Federated Training
+
+
+---
+
+15. E1 — Baseline Reproducibility
+
+Objective
+
+Verify that the same FedMed configuration produces reproducible federated-learning results across repeated executions.
 
 Configuration:
 
-    Clients: 2
-    Rounds: 3
-    Train fraction: 1.0
-    Evaluation fraction: 1.0
-    Local epochs: 1
-    Partition: current IID setup
-    Strategy: FedAvgStrategy
-    Aggregator: FedAvgAggregator
+Clients: 2
+Rounds: 3
+Train fraction: 1.0
+Evaluation fraction: 1.0
+Local epochs: 1
+Partition: IID
+Strategy: FedAvgStrategy
+Aggregator: FedAvgAggregator
 
 The experiment was executed twice using the same configuration.
 
-Round parameter fingerprints:
+Parameter fingerprints:
 
-    Round 1: 5d2399307f878547 -> 166dbbaac8c674b6
-    Round 2: 166dbbaac8c674b6 -> 2c9f2041b7a13ade
-    Round 3: 2c9f2041b7a13ade -> 32346c94ed9fdb6f
+Round 1:
+5d2399307f878547
+        ->
+166dbbaac8c674b6
 
-Aggregated metrics:
+Round 2:
+166dbbaac8c674b6
+        ->
+2c9f2041b7a13ade
 
-    Train loss:
-        Round 1: 0.8096474260
-        Round 2: 0.8063939661
-        Round 3: 0.8031985164
+Round 3:
+2c9f2041b7a13ade
+        ->
+32346c94ed9fdb6f
 
-    Evaluation loss:
-        Round 1: 0.6489310861
-        Round 2: 0.6493559479
-        Round 3: 0.6498010904
+Results:
 
-    Accuracy:
-        50.00% in every round
+Train loss:
+R1 0.8096474260
+R2 0.8063939661
+R3 0.8031985164
 
-    Examples:
-        16 per round
+Evaluation loss:
+R1 0.6489310861
+R2 0.6493559479
+R3 0.6498010904
 
-**Result:**
+Accuracy:
+50.00% every round
 
-The repeated runs produced the same parameter fingerprints and metrics.
-This validates deterministic/reproducible behavior for the current baseline
-configuration.
+Examples:
+16 per round
 
----
+The repeated runs produced matching parameter fingerprints and metrics, validating deterministic behavior for this baseline configuration.
 
-### E2 — Client Count
-
-**Objective:** Observe federated-learning behavior when the number of
-participating Flower clients changes.
-
-The experiments used 3 federated rounds with 100% training and evaluation
-participation.
-
-#### E2-A — 1 Client
-
-    Training clients per round: 1
-    Evaluation clients per round: 1
-    Examples per round: 8
-
-Metrics:
-
-    Train loss:
-        Round 1: 0.8189847767
-        Round 2: 0.8152351081
-        Round 3: 0.8115414977
-
-    Evaluation loss:
-        Round 1: 0.6616895199
-        Round 2: 0.6618472934
-        Round 3: 0.6620339751
-
-    Accuracy:
-        50.00% in every round
-
-#### E2-B — 2 Clients
-
-    Training clients per round: 2
-    Evaluation clients per round: 2
-    Examples per round: 16
-
-Metrics:
-
-    Train loss:
-        Round 1: 0.8096474260
-        Round 2: 0.8063939661
-        Round 3: 0.8031985164
-
-    Evaluation loss:
-        Round 1: 0.6489310861
-        Round 2: 0.6493559479
-        Round 3: 0.6498010904
-
-    Accuracy:
-        50.00% in every round
-
-#### E2-C — 3 Clients
-
-    Training clients per round: 3
-    Evaluation clients per round: 3
-    Examples per round: 24
-
-Metrics:
-
-    Train loss:
-        Round 1: 0.7625652552
-        Round 2: 0.7611813347
-        Round 3: 0.7598178188
-
-    Evaluation loss:
-        Round 1: 0.6903412938
-        Round 2: 0.6900853515
-        Round 3: 0.6898385584
-
-    Accuracy:
-        41.67% in every round
-
-**Observation:**
-
-Increasing the number of clients did not automatically improve evaluation
-accuracy in the current experiment. The 3-client experiment achieved lower
-training loss but lower evaluation accuracy than the 1- and 2-client runs.
-
-The experiment also changes the total amount of data because each client
-currently contributes 8 examples. Therefore, this experiment measures client
-count together with the corresponding increase in total participating data;
-it does not isolate client count as a completely independent variable.
 
 ---
 
-### E3 — Training Client Participation Fraction
+16. E2 — Client Count
 
-**Objective:** Validate Flower training-client fraction selection and observe
-the effect of partial client participation while keeping evaluation
-participation at 100%.
+Objective
 
-The experiments used:
+Observe federated-learning behavior as the number of participating Flower clients changes.
 
-    Available clients: 4
-    Rounds: 3
-    Evaluation fraction: 1.0
-    Local epochs: 1
+All experiments used:
 
-The runtime selection logic uses the configured participation fraction to
-select the required number of available Flower nodes.
+Rounds: 3
+Training fraction: 100%
+Evaluation fraction: 100%
 
-#### E3-A — 100% Training Participation
+E2-A — 1 Client
 
-    Training fraction: 1.00
-    Training clients: 4
-    Evaluation clients: 4
-    Examples per training round: 32
+Training clients: 1
+Evaluation clients: 1
+Examples per round: 8
 
-Metrics:
+Train loss:
+0.8189847767
+0.8152351081
+0.8115414977
 
-    Train loss:
-        Round 1: 0.7766701356
-        Round 2: 0.7748080865
-        Round 3: 0.7729736418
+Evaluation loss:
+0.6616895199
+0.6618472934
+0.6620339751
 
-    Evaluation loss:
-        Round 1: 0.6831279024
-        Round 2: 0.6829234138
-        Round 3: 0.6827315167
+Accuracy:
+50.00%
 
-    Accuracy:
-        43.75% in every round
+E2-B — 2 Clients
 
-#### E3-B — 75% Training Participation
+Training clients: 2
+Evaluation clients: 2
+Examples per round: 16
 
-    Training fraction: 0.75
-    Training clients: 3
-    Evaluation clients: 4
-    Examples per training round: 24
+Train loss:
+0.8096474260
+0.8063939661
+0.8031985164
 
-Metrics:
+Evaluation loss:
+0.6489310861
+0.6493559479
+0.6498010904
 
-    Train loss:
-        Round 1: 0.7625652552
-        Round 2: 0.7611813347
-        Round 3: 0.7598178188
+Accuracy:
+50.00%
 
-    Evaluation loss:
-        Round 1: 0.6831628382
-        Round 2: 0.6829900295
-        Round 3: 0.6828266159
+E2-C — 3 Clients
 
-    Accuracy:
-        43.75% in every round
+Training clients: 3
+Evaluation clients: 3
+Examples per round: 24
 
-#### E3-C — 50% Training Participation
+Train loss:
+0.7625652552
+0.7611813347
+0.7598178188
 
-    Training fraction: 0.50
-    Training clients: 2
-    Evaluation clients: 4
-    Examples per training round: 16
+Evaluation loss:
+0.6903412938
+0.6900853515
+0.6898385584
 
-Metrics:
+Accuracy:
+41.67%
 
-    Train loss:
-        Round 1: 0.6990955323
-        Round 2: 0.6990120113
-        Round 3: 0.6989294589
+The experiment changes both client count and total participating data because each client contributes 8 examples. Therefore, the experiment does not isolate client count as a completely independent variable.
 
-    Evaluation loss:
-        Round 1: 0.6494003683
-        Round 2: 0.6494136974
-        Round 3: 0.6494279876
-
-    Accuracy:
-        Round 1: 56.25%
-        Round 2: 56.25%
-        Round 3: 59.375%
-
-#### E3-D — 25% Training Participation
-
-    Training fraction: 0.25
-    Training clients: 1
-    Evaluation clients: 4
-    Examples per training round: 8
-
-Metrics:
-
-    Train loss:
-        Round 1: 0.7484648526
-        Round 2: 0.7473103702
-        Round 3: 0.7461675704
-
-    Evaluation loss:
-        Round 1: 0.6494098157
-        Round 2: 0.6494439542
-        Round 3: 0.6494901925
-
-    Accuracy:
-        Round 1: 56.25%
-        Round 2: 59.375%
-        Round 3: 59.375%
-
-**Runtime validation:**
-
-    100% -> 4 training clients
-     75% -> 3 training clients
-     50% -> 2 training clients
-     25% -> 1 training client
-
-Evaluation remained at 4 clients for all E3 experiments.
-
-Parameter fingerprints changed across every federated round, confirming that
-the global model parameters continued to evolve during training.
-
-**Observation:**
-
-The participation-fraction mechanism works correctly in the real Flower
-multi-node runtime. Lower participation did not cause runtime or aggregation
-failures in these experiments.
-
-The 50% and 25% experiments produced higher evaluation accuracy than the
-100% and 75% experiments in these particular runs. This should not be
-interpreted as evidence that lower participation is inherently better.
-Client selection is deterministic in the current implementation, and
-different participation fractions result in different sets of training
-clients. More controlled repetitions would therefore be required to
-attribute performance differences specifically to the participation
-fraction.
-
-Runtime measurements were also recorded, but the runs experienced Flower
-logstream reconnections and startup overhead. Therefore, runtime differences
-should not be treated as a clean measurement of participation-efficiency
-scaling.
 
 ---
-Experiment Status
 
-Completed:
+17. E3 — Training Client Participation Fraction
 
-    E1 — Baseline Reproducibility               [COMPLETED]
-    E2 — Client Count                           [COMPLETED]
-    E3 — Training Client Participation Fraction [COMPLETED]
-    E4 — Number of Federated Rounds             [COMPLETED]
-    E5 — IID vs Non-IID Data                    [COMPLETED]
-    E6 — Client Failure / Dropout               [COMPLETED]
+Objective
 
-### E6 — Client Failure / Dropout Results
+Validate client participation fraction handling in the real Flower multi-node runtime.
 
-**Configuration**
+Configuration:
 
-    Flower SuperNodes: 4
-    Partitions: 0, 1, 2, 3
-    Training participation: 100%
-    Evaluation participation: 100%
-    Federated rounds: 3
-    Data partitioning: IID
-    Controlled failure: partition 0 during Round 2
-    Failure scope: TRAIN only
+Available clients: 4
+Rounds: 3
+Evaluation fraction: 1.0
+Local epochs: 1
 
-**Observed results**
+Results
 
-| Round | Successful training clients | Training examples | Train loss | Eval loss | Accuracy |
-|---|---:|---:|---:|---:|---:|
-| 1 | 4/4 | 32 | 0.687063 | 0.686760 | 0.5000 |
-| 2 | 3/4 | 24 | 0.701005 | 0.686616 | 0.5000 |
-| 3 | 4/4 | 32 | 0.686734 | 0.686436 | 0.5000 |
+Training Fraction	Training Clients	Evaluation Clients
 
-**Parameter fingerprints**
+100%	4	4
+75%	3	4
+50%	2	4
+25%	1	4
 
-| Round | Input | Output |
-|---|---|---|
-| 1 | `5d2399307f878547` | `25b09817ca2394e1` |
-| 2 | `25b09817ca2394e1` | `fdfe7049db24c893` |
-| 3 | `fdfe7049db24c893` | `9ad410e9f5e5b295` |
 
-**Failure handling evidence**
+The Flower runtime correctly selected:
 
-During Round 2, partition 0 raised the controlled E6 failure:
+100% -> 4 clients
+75%  -> 3 clients
+50%  -> 2 clients
+25%  -> 1 client
 
-    E6 controlled client dropout: partition=0, round=2
+Observed accuracies:
 
-The Flower server received the failed training reply and ignored it:
+100%:
+43.75%, 43.75%, 43.75%
 
-    ignoring failed training reply from node 5740701070240325215
+75%:
+43.75%, 43.75%, 43.75%
 
-Aggregation then continued:
+50%:
+56.25%, 56.25%, 59.375%
 
-    Delegating Flower training aggregation to FedMed Strategy for round 2.
-    ROUND 2 OUTPUT fingerprint=fdfe7049db24c893
+25%:
+56.25%, 59.375%, 59.375%
 
-Round 2 therefore completed using the three successful training clients. Evaluation still used all four clients, and Round 3 returned to 4/4 successful training clients.
+These results describe the particular deterministic client-selection configuration and should not be interpreted as evidence that lower participation is inherently better.
 
-**Conclusion**
 
-E6 successfully demonstrates controlled client-failure tolerance in the Flower runtime. A training client can fail during a federated round without aborting the round: the failed reply is ignored, the remaining successful client updates are aggregated, evaluation continues normally, and subsequent rounds proceed successfully.
+---
 
+18. E4 — Number of Federated Rounds
 
-### E7 — Local Epochs
+Objective
 
-E7 evaluates the effect of local training epochs on the federated learning
-workflow while keeping the federated runtime configuration fixed.
+Examine the behavior of the system across an increased number of federated rounds.
 
-**Configurations**
+Configuration:
 
-    E7-A → local_epochs = 1
-    E7-B → local_epochs = 2
-    E7-C → local_epochs = 5
+Clients: 4
+Rounds: 5
+Training participation: 100%
+Evaluation participation: 100%
 
-**Fixed configuration**
+Results:
 
-    Flower SuperNodes: 4
-    Partitions: 0, 1, 2, 3
-    Training participation: 100%
-    Evaluation participation: 100%
-    Federated rounds: 3
-    Data partitioning: IID
-    Batch size: 4
-    Learning rate: 0.01
-    Optimizer: SGD
-    Seed: 42
-    Controlled failure: disabled
+Round 1:
+Train loss = 0.6799688861
+Eval loss  = 0.7347568944
+Accuracy   = 0.46875
 
-#### E7-A — Local Epochs = 1
+Round 2:
+Train loss = 0.6799019128
+Eval loss  = 0.7345721349
 
-| Round | Epochs | Train Loss | Eval Loss | Accuracy | Train Examples |
-|---|---:|---:|---:|---:|---:|
-| 1 | 1 | 0.687063 | 0.686760 | 0.5000 | 32 |
-| 2 | 1 | 0.686876 | 0.686577 | 0.5000 | 32 |
-| 3 | 1 | 0.686694 | 0.686398 | 0.5000 | 32 |
+Round 3:
+Train loss = 0.6798361465
+Eval loss  = 0.7343898416
 
-**Parameter fingerprints**
+Round 4:
+Train loss = 0.6797715276
+Eval loss  = 0.7342100814
 
-| Round | Input | Output |
-|---|---|---|
-| 1 | `5d2399307f878547` | `25b09817ca2394e1` |
-| 2 | `25b09817ca2394e1` | `8d8daa3109b91d4d` |
-| 3 | `8d8daa3109b91d4d` | `e668691dd739dc09` |
-
-Runtime: **250.32s**
+Round 5:
+Train loss = 0.6797080487
+Eval loss  = 0.7340327278
 
-Client-side metrics confirmed `epochs_completed = 1`,
-`batches_processed = 2`, and `num_examples = 32` per round.
+Accuracy remained:
 
-#### E7-B — Local Epochs = 2
-
-| Round | Epochs | Train Loss | Eval Loss | Accuracy | Train Examples |
-|---|---:|---:|---:|---:|---:|
-| 1 | 2 | 0.683617 | 0.686575 | 0.5000 | 64 |
-| 2 | 2 | 0.683248 | 0.686220 | 0.5000 | 64 |
-| 3 | 2 | 0.682896 | 0.685882 | 0.5000 | 64 |
+46.875%
 
-**Parameter fingerprints**
+for all five rounds.
 
-| Round | Input | Output |
-|---|---|---|
-| 1 | `5d2399307f878547` | `a2a88244ee48d7e9` |
-| 2 | `a2a88244ee48d7e9` | `6434ec3385c1ca86` |
-| 3 | `6434ec3385c1ca86` | `ca732d9ce8ca8362` |
+The experiment confirms successful execution across five federated rounds.
 
-Runtime: **250.24s**
 
-Client-side metrics confirmed `epochs_completed = 2`,
-`batches_processed = 4`, and `num_examples = 64` per round.
+---
 
-#### E7-C — Local Epochs = 5
+19. E5 — IID vs Label-Skew Data
 
-| Round | Epochs | Train Loss | Eval Loss | Accuracy | Train Examples |
-|---|---:|---:|---:|---:|---:|
-| 1 | 5 | 0.673805 | 0.686037 | 0.5000 | 160 |
-| 2 | 5 | 0.672913 | 0.685231 | 0.5000 | 160 |
-| 3 | 5 | 0.672117 | 0.684518 | 0.5000 | 160 |
+Objective
 
-**Parameter fingerprints**
+Compare the federated workflow under IID and label-skew data partitioning.
 
-| Round | Input | Output |
-|---|---|---|
-| 1 | `5d2399307f878547` | `1b889617a072c9a9` |
-| 2 | `1b889617a072c9a9` | `0bb514318ba100d0` |
-| 3 | `0bb514318ba100d0` | `c08dc578e6a33acf` |
+Configuration:
 
-Runtime: **311.00s**
+Clients: 4
+Rounds: 3
+Training participation: 100%
+Evaluation participation: 100%
 
-Client-side metrics confirmed `epochs_completed = 5`,
-`batches_processed = 10`, and `num_examples = 160` per round.
+E5-A — IID
 
-#### E7 Summary
+Train loss:
+0.6870625988
+0.6868757978
+0.6866935045
 
-| Metric | E7-A: 1 Epoch | E7-B: 2 Epochs | E7-C: 5 Epochs |
-|---|---:|---:|---:|
-| Final train loss | 0.686694 | 0.682896 | 0.672117 |
-| Final eval loss | 0.686398 | 0.685882 | 0.684518 |
-| Accuracy | 0.5000 | 0.5000 | 0.5000 |
-| Train examples/round | 32 | 64 | 160 |
-| Batches/client | 2 | 4 | 10 |
-| Runtime | 250.32s | 250.24s | 311.00s |
+Eval loss:
+0.6867602393
+0.6865770072
+0.6863982305
 
-Across these runs, increasing local epochs was associated with lower training
-loss and slightly lower evaluation loss, while measured accuracy remained
-0.5000. The 5-epoch run required more measured execution time. These are
-observations from this experimental configuration and are not treated as
-general conclusions about local epoch selection.
+Accuracy:
+50.00%
 
-All three E7 configurations completed all three federated rounds with 4/4
-training clients and 4/4 evaluation clients participating in every round.
-Parameter fingerprints advanced across every round, confirming continued
-global model updates.
+E5-B — Label Skew
 
-### E8 — Data Quantity Imbalance
+Train loss:
+0.6842055842
+0.6840200424
+0.6838389635
 
-E8 evaluates federated training with unequal quantities of local training data
-while keeping evaluation data balanced. The purpose is to exercise the
-existing example-weighted aggregation path under heterogeneous client data
-sizes.
-
-**Configuration**
-
-    Flower SuperNodes: 4
-    Partitions: 0, 1, 2, 3
-    Training participation: 100%
-    Evaluation participation: 100%
-    Federated rounds: 3
-    Data partitioning: IID
-    Local epochs: 5
-    Batch size: 4
-    Learning rate: 0.01
-    Optimizer: SGD
-    Seed: 42
-    Controlled failure: disabled
-
-**Training-data distribution**
-
-    client_0 → 4 examples
-    client_1 → 8 examples
-    client_2 → 8 examples
-    client_3 → 12 examples
-
-    Total → 32 examples
-
-Evaluation data remained balanced:
-
-    client_0 → 8 examples
-    client_1 → 8 examples
-    client_2 → 8 examples
-    client_3 → 8 examples
-
-    Total → 32 examples
-
-#### E8 Results
-
-| Round | Train Loss | Eval Loss | Accuracy | Eval Examples |
-|---|---:|---:|---:|---:|
-| 1 | 0.680932 | 0.686110 | 0.5000 | 32 |
-| 2 | 0.680199 | 0.685398 | 0.5000 | 32 |
-| 3 | 0.679574 | 0.684794 | 0.5000 | 32 |
-
-**Parameter fingerprints**
-
-| Round | Input | Output |
-|---|---|---|
-| 1 | `5d2399307f878547` | `74f3bd54e6ec7312` |
-| 2 | `74f3bd54e6ec7312` | `e0c60566724a0461` |
-| 3 | `e0c60566724a0461` | `51c4208f03172894` |
-
-Runtime: **159.91s**
-
-All three rounds completed with 4/4 training clients and 4/4 evaluation
-clients participating in every round.
-
-The aggregated client-side training metrics reported `num_examples = 160`
-per round, corresponding to 32 training examples processed for 5 local
-epochs. The reported `batches_processed = 11.25` is consistent with the
-example-weighted aggregation of the heterogeneous client workloads.
-
-Evaluation remained fixed at 32 examples per round. Accuracy remained
-0.5000 across all three rounds, while training loss decreased from 0.680932
-to 0.679574 and evaluation loss decreased from 0.686110 to 0.684794.
-
-These observations describe this experimental configuration and are not
-treated as general conclusions about data imbalance or aggregation behavior.
-
-### E9 — Centralized vs Federated Training
-
-E9 compares centralized training with the existing federated workflow under a
-matched training-data exposure. The centralized run uses the full 32-example
-dataset for 15 epochs. The federated baseline uses 4 IID clients with 8
-examples each, 5 local epochs per round, and 3 federated rounds. Both
-configurations therefore process 480 example-passes in total.
-
-**Common configuration**
-
-    Training samples: 32
-    Batch size: 4
-    Learning rate: 0.01
-    Optimizer: SGD
-    Seed: 42
-
-**E9-A — Centralized**
-
-    Training mode: centralized
-    Clients: 1
-    Epochs: 15
-    Training example-passes: 480
-    Evaluation samples: 32
-
-| Metric | Result |
-|---|---:|
-| Epochs | 15 |
-| Samples processed | 480 |
-| Batches processed | 120 |
-| Final train loss | 0.6817503422 |
-| Evaluation samples | 32 |
-| Evaluation batches | 8 |
-| Evaluation loss | 0.6809001043 |
-| Accuracy | 0.5000 |
-| Runtime | 16.54s |
-
-The E9-A centralized experiment was implemented as
-`tests/test_e9_centralized.py` using the existing FedMed `Trainer`,
-`Evaluator`, `FlowerSmokeTestModel`, and deterministic dataset construction.
-
-**E9-B — Federated**
-
-E9-B reuses the previously validated E7-C federated experiment as the
-balanced federated baseline. E7-C used the pre-E8 data configuration with
-four IID clients and 8 training examples per client.
-
-    Training mode: federated
-    Clients: 4
-    Training examples/client: 8
-    Federated rounds: 3
-    Local epochs/round: 5
-    Training example-passes: 480
-    Evaluation samples/round: 32
-
-| Metric | Result |
-|---|---:|
-| Federated rounds | 3 |
-| Local epochs | 5 |
-| Training examples/round | 32 |
-| Final train loss | 0.672117 |
-| Final evaluation loss | 0.684518 |
-| Accuracy | 0.5000 |
-| Runtime | 311.00s |
-
-**E9 comparison**
-
-| Metric | Centralized | Federated |
-|---|---:|---:|
-| Total training examples | 32 | 32/round |
-| Training example-passes | 480 | 480 |
-| Epochs / local epochs | 15 | 5 × 3 rounds |
-| Final train loss | 0.681750 | 0.672117 |
-| Final evaluation loss | 0.680900 | 0.684518 |
-| Accuracy | 0.5000 | 0.5000 |
-| Measured runtime | 16.54s | 311.00s |
-
-Both configurations produced 50% accuracy under this experimental setup.
-The centralized run produced the lower final evaluation loss, while the
-federated run produced the lower final training loss. The measured federated
-runtime includes Flower distributed-runtime and orchestration overhead and
-therefore should not be interpreted as a direct model-training speed
-comparison.
-
-E9-B is explicitly recorded as a reused E7-C result rather than a newly
-rerun experiment. The E9-A test passed independently, and the complete
-regression suite passed with 603 tests.
-
-These observations describe this specific experimental configuration and are
-not treated as general conclusions about centralized or federated learning.
+Eval loss:
+0.6867608801
+0.6865782812
+0.6864000931
 
+Accuracy:
+50.00%
+
+Both partitioning configurations completed successfully in the real Flower runtime.
+
+The experiment confirms that the FedMed partitioning and aggregation pipeline can execute with both IID and label-skew client distributions.
+
+
+---
+
+20. E6 — Client Failure / Dropout
+
+Objective
+
+Test federated-round resilience when one training client fails.
+
+Configuration:
+
+Flower SuperNodes: 4
+Partitions: 0, 1, 2, 3
+Training participation: 100%
+Evaluation participation: 100%
+Rounds: 3
+Data partitioning: IID
+Controlled failure: Partition 0 during Round 2
+Failure scope: TRAIN only
+
+Results:
+
+Round	Successful Training Clients	Training Examples	Train Loss	Eval Loss	Accuracy
+
+1	4/4	32	0.687063	0.686760	0.5000
+2	3/4	24	0.701005	0.686616	0.5000
+3	4/4	32	0.686734	0.686436	0.5000
+
+
+During Round 2, the controlled client failure was triggered:
+
+E6 controlled client dropout: partition=0, round=2
+
+The server ignored the failed training reply and continued aggregation using the successful clients.
+
+Round 2 therefore completed with:
+
+3 successful training clients
+24 training examples
+
+Round 3 returned to:
+
+4 successful training clients
+32 training examples
+
+This demonstrates the implemented client-failure tolerance path in the Flower runtime.
+
+
+---
+
+21. E7 — Local Epochs
+
+Objective
+
+Study the effect of different local training epoch configurations while keeping the federated runtime configuration fixed.
+
+Configurations:
+
+E7-A -> 1 local epoch
+E7-B -> 2 local epochs
+E7-C -> 5 local epochs
+
+Fixed configuration:
+
+Flower SuperNodes: 4
+Training participation: 100%
+Evaluation participation: 100%
+Rounds: 3
+Partitioning: IID
+Batch size: 4
+Learning rate: 0.01
+Optimizer: SGD
+Seed: 42
+Controlled failure: disabled
+
+E7 Summary
+
+Metric	1 Epoch	2 Epochs	5 Epochs
+
+Final train loss	0.686694	0.682896	0.672117
+Final eval loss	0.686398	0.685882	0.684518
+Accuracy	0.5000	0.5000	0.5000
+Train examples/round	32	64	160
+Batches/client	2	4	10
+Runtime	250.32s	250.24s	311.00s
+
+
+All three configurations completed all three federated rounds.
+
+The experiments showed lower training loss with increasing local epochs in this configuration, while measured accuracy remained 0.5000.
+
+
+---
+
+22. E8 — Data Quantity Imbalance
+
+Objective
+
+Evaluate federated training with unequal quantities of local training data while using balanced evaluation data.
+
+Configuration:
+
+Clients: 4
+Rounds: 3
+Training participation: 100%
+Evaluation participation: 100%
+Partitioning: IID
+Local epochs: 5
+Batch size: 4
+Learning rate: 0.01
+Optimizer: SGD
+Seed: 42
+
+Training distribution:
+
+Client 0 -> 4 examples
+Client 1 -> 8 examples
+Client 2 -> 8 examples
+Client 3 -> 12 examples
+
+Total -> 32 examples
+
+Evaluation distribution:
+
+Client 0 -> 8 examples
+Client 1 -> 8 examples
+Client 2 -> 8 examples
+Client 3 -> 8 examples
+
+Total -> 32 examples
+
+Results:
+
+Round	Train Loss	Eval Loss	Accuracy	Eval Examples
+
+1	0.680932	0.686110	0.5000	32
+2	0.680199	0.685398	0.5000	32
+3	0.679574	0.684794	0.5000	32
+
+
+The experiment exercises the example-weighted aggregation path using heterogeneous local training-data quantities.
+
+
+---
+
+23. E9 — Centralized vs Federated Training
+
+Objective
+
+Compare centralized training with the existing federated workflow under matched training-data exposure.
+
+Common configuration:
+
+Training samples: 32
+Batch size: 4
+Learning rate: 0.01
+Optimizer: SGD
+Seed: 42
+
+Both configurations process:
+
+480 example-passes
+
+
+---
+
+E9-A — Centralized Training
+
+Samples: 32
+Epochs: 15
+Batch size: 4
+Example-passes: 480
+
+Results:
+
+Metric	Result
+
+Epochs	15
+Samples processed	480
+Batches processed	120
+Final train loss	0.6817503422
+Evaluation samples	32
+Evaluation loss	0.6809001043
+Accuracy	0.5000
+Runtime	16.54s
+
+
+The centralized experiment was implemented using the existing:
+
+Trainer
+Evaluator
+FlowerSmokeTestModel
+FedMedDataset
+
+
+---
+
+E9-B — Federated Training
+
+The federated baseline reuses the previously validated E7-C experiment.
+
+Configuration:
+
+Clients: 4
+Training examples/client: 8
+Rounds: 3
+Local epochs: 5
+Training example-passes: 480
+
+Results:
+
+Metric	Result
+
+Federated rounds	3
+Local epochs	5
+Training examples/round	32
+Final train loss	0.672117
+Final evaluation loss	0.684518
+Accuracy	0.5000
+Runtime	311.00s
+
+
+The federated runtime includes Flower orchestration and distributed-runtime overhead.
+
+These results are specific to this experimental configuration and are not treated as general conclusions about centralized or federated learning.
+
+
+---
+
+24. Experiment Status
+
+E1 — Baseline Reproducibility                 COMPLETED
+E2 — Client Count                             COMPLETED
+E3 — Training Participation Fraction          COMPLETED
+E4 — Number of Federated Rounds               COMPLETED
+E5 — IID vs Label Skew                        COMPLETED
+E6 — Client Failure / Dropout                 COMPLETED
+E7 — Local Epochs                             COMPLETED
+E8 — Data Quantity Imbalance                  COMPLETED
+E9 — Centralized vs Federated Training        COMPLETED
+
+
+---
+
+25. Upgrade and Refactoring Work
+
+After completing the experimental phase, FedMed entered a module-upgrade phase.
+
+The upgrade workflow is:
+
+Inspect
+   |
+Understand
+   |
+Identify actual problem
+   |
+Design upgrade
+   |
+Implement
+   |
+Unit Tests
+   |
+Integration Tests
+   |
+Full Regression
+   |
+Commit
+
+The first upgrade work focused on:
+
+src/fl/orchestrator.py
+
+
+---
+
+26. Orchestrator Upgrade
+
+The orchestrator was reviewed for unnecessary framework-specific data-loader construction.
+
+Previously the orchestrator directly constructed:
+
+torch.utils.data.DataLoader
+
+The implementation was updated to use the existing FedMed abstraction:
+
+src.data.loader.create_dataloader
+
+This keeps data-loader construction behind the FedMed data layer.
+
+The unused TensorDataset import was also removed.
+
+The change was committed as:
+
+0413414
+refactor: use FedMed dataloader abstraction
+
+
+---
+
+27. Evaluation Split Correction
+
+During the orchestrator review, an existing E8 integration mismatch was identified.
+
+The partition loader already supported:
+
+split="train"
+split="eval"
+
+but build_client() was previously constructing both loaders using the training split.
+
+The implementation was corrected so that:
+
+train_loader = self._create_partitioned_loader(
+    partition_index
+)
+
+eval_loader = self._create_partitioned_loader(
+    partition_index,
+    split="eval",
+)
+
+Therefore the client now receives separate training and evaluation partitions.
+
+A regression test was added to verify:
+
+client_0 training samples = 4
+client_0 evaluation samples = 8
+
+The fix was committed as:
+
+4804da3
+fix: use evaluation split for client evaluation
+
+
+---
+
+28. Test Coverage
+
+FedMed currently has a large automated test suite covering:
+
+Configuration
+
+Dataset behavior
+
+Data loaders
+
+Data partitioning
+
+Models
+
+Training
+
+Evaluation
+
+Metrics
+
+Parameters
+
+Federated clients
+
+Strategies
+
+Aggregation
+
+Round coordination
+
+Server behavior
+
+Flower client integration
+
+Flower server integration
+
+Orchestrator composition
+
+Failure handling
+
+Centralized training experiment
+
+
+Latest full regression:
+
+609 passed
+2 warnings
+
+The warnings are third-party deprecation warnings from the installed Typer/Click environment.
+
+
+---
+
+29. Orchestrator Tests
+
+The orchestrator now has direct tests covering:
+
+Orchestrator construction
+Multiple orchestrator construction
+Strategy and aggregator composition
+Torch thread configuration
+Distinct train/evaluation partition loading
+Client evaluation split usage
+
+Current orchestrator test result:
+
+6 passed
+
+
+---
+
+30. Current Repository Status
+
+Current branch:
+
+main
+
+Latest commit:
+
+4804da3
+fix: use evaluation split for client evaluation
+
+Previous commit:
+
+0413414
+refactor: use FedMed dataloader abstraction
+
+Current test status:
+
+609 passed
+2 warnings
+
+
+---
+
+31. Running FedMed
+
+Activate Environment
+
+cd ~/fedmed
+source .venv/bin/activate
+
+
+---
+
+Start Flower SuperLink
+
+Terminal 1:
+
+cd ~/fedmed
+source .venv/bin/activate
+
+flower-superlink --insecure
+
+Current local APIs:
+
+Control API : 9093
+Runtime API : 9091
+Fleet API   : 9092
+
+
+---
+
+Start SuperNode 1
+
+Terminal 2:
+
+cd ~/fedmed
+source .venv/bin/activate
+
+flower-supernode \
+  --insecure \
+  --superlink 127.0.0.1:9092 \
+  --clientappio-api-address 0.0.0.0:9095 \
+  --node-config "partition-id=0 num-partitions=4"
+
+
+---
+
+Start SuperNode 2
+
+Terminal 3:
+
+cd ~/fedmed
+source .venv/bin/activate
+
+flower-supernode \
+  --insecure \
+  --superlink 127.0.0.1:9092 \
+  --clientappio-api-address 0.0.0.0:9096 \
+  --node-config "partition-id=1 num-partitions=4"
+
+
+---
+
+Start SuperNode 3
+
+Terminal 4:
+
+cd ~/fedmed
+source .venv/bin/activate
+
+flower-supernode \
+  --insecure \
+  --superlink 127.0.0.1:9092 \
+  --clientappio-api-address 0.0.0.0:9097 \
+  --node-config "partition-id=2 num-partitions=4"
+
+
+---
+
+Start SuperNode 4
+
+Terminal 5:
+
+cd ~/fedmed
+source .venv/bin/activate
+
+flower-supernode \
+  --insecure \
+  --superlink 127.0.0.1:9092 \
+  --clientappio-api-address 0.0.0.0:9098 \
+  --node-config "partition-id=3 num-partitions=4"
+
+
+---
+
+Run the Flower Application
+
+Terminal 6:
+
+cd ~/fedmed
+source .venv/bin/activate
+
+FLWR_LOG_LEVEL=DEBUG flwr run . local-deployment --stream
+
+
+---
+
+32. Running Tests
+
+Run the complete test suite:
+
+cd ~/fedmed
+.venv/bin/pytest -q
+
+Expected current result:
+
+609 passed, 2 warnings
+
+Run orchestrator tests:
+
+.venv/bin/pytest -q tests/test_orchestrator.py -s
+
+Run data-loader tests:
+
+.venv/bin/pytest -q tests/test_loader.py
+
+
+---
+
+33. Daily Development Check
+
+Before committing changes:
+
+cd ~/fedmed
+
+.venv/bin/pytest -q
+
+Check repository status:
+
+git status --short
+
+Review the latest commit:
+
+git log -1 --oneline
+
+The project follows:
+
+Change
+  |
+Test
+  |
+Full Regression
+  |
+Review
+  |
+Commit
+
+
+---
+
+34. Configuration
+
+The main project configuration is stored under:
+
+configs/
+
+Flower runtime configuration is managed separately through:
+
+pyproject.toml
+
+The architecture intentionally keeps:
+
+FedMed application configuration
+
+separate from:
+
+Flower runtime configuration
+
+
+---
+
+35. Technology Stack
+
+Programming Language
+
+Python 3.12
+
+Machine Learning
+
+PyTorch
+NumPy
+
+Federated Learning
+
+Flower 1.34.0
+
+Testing
+
+pytest
+
+Runtime Environment
+
+WSL2 / Ubuntu
+
+Version Control
+
+Git
+GitHub
+
+
+---
+
+36. Project Structure
+
+FedMed/
+│
+├── app/
+│   ├── client.py
+│   ├── failure_mod.py
+│   ├── main.py
+│   └── server.py
+│
+├── configs/
+│   └── config.yaml
+│
+├── src/
+│   ├── aggregation/
+│   │   └── fedavg.py
+│   │
+│   ├── common/
+│   │   ├── config.py
+│   │   ├── exceptions.py
+│   │   └── logging.py
+│   │
+│   ├── data/
+│   │   ├── dataset.py
+│   │   ├── loader.py
+│   │   └── partitioner.py
+│   │
+│   ├── fl/
+│   │   ├── aggregation.py
+│   │   ├── client.py
+│   │   ├── orchestrator.py
+│   │   ├── parameters.py
+│   │   ├── rounds.py
+│   │   ├── server.py
+│   │   └── strategy.py
+│   │
+│   ├── models/
+│   │   ├── base_model.py
+│   │   └── model_factory.py
+│   │
+│   ├── monitoring/
+│   │   ├── logger.py
+│   │   └── metrics.py
+│   │
+│   └── training/
+│       ├── evaluator.py
+│       ├── metrics.py
+│       └── trainer.py
+│
+├── tests/
+│   ├── test_app_client.py
+│   ├── test_app_server.py
+│   ├── test_loader.py
+│   ├── test_orchestrator.py
+│   ├── test_partitioner.py
+│   ├── test_e9_centralized.py
+│   └── ...
+│
+├── .env.example
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+├── requirements.txt
+└── README.md
+
+
+---
+
+37. Current Development Status
+
+Core Architecture                    COMPLETED
+Training Infrastructure              COMPLETED
+Evaluation Infrastructure            COMPLETED
+FedAvg Aggregation                   COMPLETED
+Federated Strategy                   COMPLETED
+Flower Client Integration            COMPLETED
+Flower Server Integration            COMPLETED
+Multi-Node Flower Runtime            COMPLETED
+IID Partitioning                     COMPLETED
+Label-Skew Partitioning              COMPLETED
+Client Failure Experiment            COMPLETED
+Federated Experiments E1-E9          COMPLETED
+Centralized Comparison               COMPLETED
+Orchestrator Upgrade                 IN PROGRESS
+Automated Regression Suite            ACTIVE
+
+
+---
+
+38. Current Development Direction
+
+FedMed has completed its initial federated-learning runtime and experimentation stage.
+
+The project is now moving into the module upgrade and productionization stage.
+
+The upgrade process will continue module-by-module:
+
+Inspect
+   ↓
+Understand
+   ↓
+Identify actual issue
+   ↓
+Design focused improvement
+   ↓
+Implement
+   ↓
+Add/update tests
+   ↓
+Integration verification
+   ↓
+Full regression
+   ↓
+Commit
+
+The goal is to improve the existing implementation without unnecessarily changing the established FedMed architecture.
+
+
+---
+
+About
+
+FedMed is a privacy-preserving cross-silo federated learning engine for collaborative medical AI.
+
+The project focuses on building a modular, testable and experimentally validated federated learning runtime that can support future medical machine-learning workloads without requiring centralized sharing of local training data.
+
+### One thing I recommend before pasting
+
+Your current GitHub README is **much more outdated than the actual repository**. The version above updates the important stale parts:
+
+- `609 passed` instead of `577`
+- E1–E9 included
+- E6/E7/E8/E9 results included
+- current orchestrator refactoring included
+- evaluation-split correction included
+- current Flower topology with **4 SuperNodes**
+- `FedMedFlowerStrategy` described as the Flower adapter
+- Strategy/Aggregator separation preserved
+- current development status changed from runtime-completion to **module upgrade phase**
+- latest commits `0413414` and `4804da3` included
